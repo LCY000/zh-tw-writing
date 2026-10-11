@@ -25,7 +25,7 @@
 | 不要誤傷 | 引文、標題、真正的步驟順序、正式公文用語都保留，也不會為了不像 AI 而把正式文件改成口語 |
 | 忠實原文 | 潤稿和翻譯只改說法，不新增事實，也不把「可能」改成「確定」，改別人的文件時數字、日期、引文一字不動 |
 | 中英文與標點 | 依《中文文案排版指北》與教育部標點符號手冊，中英文與數字之間加半形空格，引號用「」，並列用頓號 |
-| 台灣用語 | 約 50 組直接替換的兩岸用語，加上「文件」「數據」這類要看語意判斷的詞，避免把台灣的正常用法也改掉 |
+| 台灣用語 | 45 組直接替換的兩岸用語，加上「文件」「數據」這類要看語意判斷的詞，避免把台灣的正常用法也改掉 |
 | 英翻中 | 保留原文的確定程度（may 是「可能」，不是「會」），專有名詞第一次出現寫成「中譯（English）」，並附常見翻譯腔的改法 |
 | 字型 | 預設 Noto Sans TC，附 HTML、PDF、Word 的設定方式 |
 | 檢查腳本 | 一個指令檢查句子節奏、AI 腔、標點與台灣用語，還能自動補上中英空格 |
@@ -46,20 +46,42 @@
 
 ## 安裝
 
+依照你使用 Claude 的方式，選擇下面其中一種。
+
+### Cowork、Claude 桌面版與 claude.ai
+
+不需要用到指令，下載 zip 後上傳即可。
+
+1. 下載 [zh-tw-writing.zip](https://github.com/LCY000/zh-tw-writing/releases/latest/download/zh-tw-writing.zip)，不用解壓縮。
+2. 開啟「設定 → 功能（Capabilities）」，確認「程式碼執行與檔案建立」已開啟，檢查腳本才能執行。
+3. 在同一頁的「技能（Skills）」上傳剛才下載的 zip。
+
+上傳後，在 Cowork 或一般對話中產出正式中文文件時就會自動套用。之後有新版本時，下載新的 zip 重新上傳即可，歷次版本都列在 [Releases](https://github.com/LCY000/zh-tw-writing/releases) 頁面。
+
+### Claude Code
+
 ```bash
 git clone https://github.com/LCY000/zh-tw-writing.git
 ln -s "$(pwd)/zh-tw-writing/zh-tw-writing" ~/.claude/skills/zh-tw-writing
 ```
 
-如果不想用捷徑，也可以直接把 `zh-tw-writing/zh-tw-writing` 資料夾複製到 `~/.claude/skills/` 底下，重新開一個 Claude Code 對話就會生效。
+用捷徑安裝的好處是之後只要在 clone 下來的資料夾執行 `git pull`，就會更新到最新版。如果不想用捷徑，也可以直接把 `zh-tw-writing/zh-tw-writing` 資料夾複製到 `~/.claude/skills/` 底下，重新開一個 Claude Code 對話就會生效。
+
+### 自己打包 zip
+
+修改過內容、想上傳自己的版本時，在專案根目錄執行以下指令。zip 解開後最上層必須是 `zh-tw-writing` 資料夾，裡面直接放 `SKILL.md`。
+
+```bash
+zip -r zh-tw-writing.zip zh-tw-writing -x "*/__pycache__/*" "*.DS_Store"
+```
 
 ## 檢查腳本
 
-寫好或改好中文文件之後，可以自己跑一次檢查。腳本只需要 Python 3，不用安裝其他套件，支援 `.html`、`.md`、`.txt`，統計時會自動略過表格、標題、圖說、英文參考文獻與「」裡的引文。檢查結果只是提醒，數字略微超出範圍但讀起來順暢，就不用硬改。
+寫好或改好中文文件之後，可以自己跑一次檢查。腳本只需要 Python 3，不用安裝其他套件，支援 `.html`、`.md`、`.txt`，統計時會自動略過表格、標題、程式碼與英文參考文獻，HTML 只統計 `<p>` 與 `<li>` 裡的文字。「」裡的引文不列入套話與用語檢查，但仍會算進句子節奏。檢查結果只是提醒，數字略微超出範圍但讀起來順暢，就不用硬改。
 
 ```bash
 python3 zh-tw-writing/scripts/check_zh.py 報告.md                  # 只檢查
-python3 zh-tw-writing/scripts/check_zh.py 報告.md --fix-spacing    # 自動補中英空格，原檔備份為 .bak
+python3 zh-tw-writing/scripts/check_zh.py 報告.md --fix-spacing    # 自動補中英空格，原檔備份為 .bak，不會改到程式碼
 python3 zh-tw-writing/scripts/check_zh.py 報告.html --min 2.5 --max 4.5   # 調整建議範圍
 ```
 
@@ -80,7 +102,7 @@ python3 zh-tw-writing/scripts/check_zh.py 報告.html --min 2.5 --max 4.5   # �
 分號（並列的條列項目可以用，其他多半改成逗號或句號）（1 處）：
    …基礎設施。它主要使用系統內建工具；很難被偵測——防禦方必須從行為下…
 
-中英文或數字沒有空格（2 處）：
+中英文或數字沒有空格（% 與 ° 後面接中文也要空格）（2 處）：
    …值得注意的是，Microsoft在2023年首次公開這個組織。它是…
 ```
 

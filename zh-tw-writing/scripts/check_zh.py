@@ -161,11 +161,16 @@ def show_hits(title, hits, limit=8):
 
 # ---------- 檢查 ----------
 
-def check(paragraphs, lo, hi):
+def check(paragraphs, lo, hi, html_mode=False):
     paras = [p for p in paragraphs if is_chinese_prose(p)]
     text = "\n".join(paras)
     print(f"內文段落：{len(paras)} 段")
     if not paras:
+        if html_mode and not paragraphs:
+            print("找不到 <p> 或 <li>。HTML 只統計這兩種標籤裡的文字，內文如果寫在 <div> 或其他標籤裡，"
+                  "請改用 <p>，或把內文另存成 .md／.txt 再檢查。")
+        else:
+            print("找不到中文內文段落（中文比例低於 30% 的段落、標題、表格與程式碼不列入統計）。")
         return
 
     # 1. 句子節奏
@@ -240,7 +245,8 @@ def check(paragraphs, lo, hi):
                for m in re.finditer(f"{CJK}[,;?!()]|[,;?!()]{CJK}|{CJK}:|(?<![0-9]):{CJK}", text)])
     show_hits("用了“ ”或\" \"引號（台灣用「」）",
               [ctx(text, m.start(), m.end()) for m in re.finditer(r"[“”]|\"(?=[^\"\n]*" + CJK + ")", text)])
-    show_hits("中英文或數字沒有空格", [ctx(text, m.start(), m.end()) for m in re.finditer(f"{CJK}{AN}|{AN}{CJK}", text)])
+    show_hits("中英文或數字沒有空格（% 與 ° 後面接中文也要空格）",
+              [ctx(text, m.start(), m.end()) for m in re.finditer(f"{CJK}{AN}|{AN}{CJK}|[%°]{CJK}", text)])
     show_hits("全形標點旁多了空格", [ctx(text, m.start(), m.end()) for m in re.finditer(f" [{FW_PUNCT}]|[{FW_PUNCT}] ", text)])
 
     # 4. 用語
@@ -268,14 +274,49 @@ def check(paragraphs, lo, hi):
 
 # ---------- 自動補空格 ----------
 
+PROTECT = "script|style|pre|code|kbd|samp|textarea"
+
+
 def add_spacing(seg, html_mode):
     if html_mode:
-        opn = r"(?:<(?:code|b|i|em|strong|span|a)(?:\s[^>]*)?>)*"
-        cls = r"(?:</(?:code|b|i|em|strong|span|a)>)*"
+        opn = r"(?:<(?:code|kbd|b|i|em|strong|span|a)(?:\s[^>]*)?>)*"
+        cls = r"(?:</(?:code|kbd|b|i|em|strong|span|a)>)*"
     else:
         opn = cls = ""
-    seg = re.sub(f"({CJK})({opn})({AN})", r"\1 \2\3", seg)
-    seg = re.sub(f"({AN})({cls})({CJK})", r"\1\2 \3", seg)
+    # 空格放在行內標籤外側：結束標籤之後、開始標籤之前
+    seg = re.sub(f"({CJK})({cls})({opn})({AN})", r"\1\2 \3\4", seg)
+    seg = re.sub(f"({AN}|[%°])({cls})({opn})({CJK})", r"\1\2 \3\4", seg)
+    return seg
+
+
+def add_spacing_html(seg):
+    """HTML 版：程式碼區塊的內容與標籤屬性先收起來，補完空格再放回去。"""
+    store = []
+
+    def keep(s, kind):
+        store.append(s)
+        return f"{kind[0]}{len(store) - 1}{kind[1]}"
+
+    INNER, COMMENT, ATTR = "", "", ""
+
+    def rep(c):
+        # 留一個代表字元，讓 <code> 外側仍能判斷要不要補空格
+        return "a" if re.match(AN, c) else "中" if re.match(CJK, c) else ""
+
+    def hide_inner(m):
+        inner = m.group(3)
+        if not inner:
+            return m.group(0)
+        return m.group(1) + rep(inner[0]) + keep(inner, INNER) + rep(inner[-1]) + m.group(4)
+
+    seg = re.sub(f"(<({PROTECT})\\b[^>]*>)(.*?)(</\\2\\s*>)", hide_inner, seg, flags=re.S | re.I)
+    seg = re.sub(r"<!--.*?-->", lambda m: keep(m.group(0), COMMENT), seg, flags=re.S)
+    seg = re.sub(r"(<[A-Za-z][\w-]*)(\s[^>]*)>", lambda m: m.group(1) + " " + keep(m.group(2), ATTR) + ">", seg)
+    seg = add_spacing(seg, True)
+    back = lambda m: store[int(m.group(1))]
+    seg = re.sub(" (\\d+)", back, seg)
+    seg = re.sub("(\\d+)", back, seg)
+    seg = re.sub("(?<=>)[a中]?(\\d+)[a中]?(?=<)", back, seg)
     return seg
 
 
@@ -283,9 +324,9 @@ def fix_spacing(path, text, html_mode):
     if html_mode and "<body" in text:
         b0 = text.index("<body")
         b1 = text.index("</body>") if "</body>" in text else len(text)
-        new = text[:b0] + add_spacing(text[b0:b1], True) + text[b1:]
+        new = text[:b0] + add_spacing_html(text[b0:b1]) + text[b1:]
     elif html_mode:
-        new = add_spacing(text, True)
+        new = add_spacing_html(text)
     else:
         parts = re.split(r"(```.*?```|`[^`\n]*`|https?://\S+)", text, flags=re.S)
         new = "".join(p if i % 2 else add_spacing(p, False) for i, p in enumerate(parts))
@@ -316,7 +357,7 @@ def main():
         text = fix_spacing(a.path, text, html_mode)
         print()
     paras = prose_from_html(text) if html_mode else prose_from_markdown(text)
-    check(paras, a.min, a.max)
+    check(paras, a.min, a.max, html_mode)
 
 
 if __name__ == "__main__":
