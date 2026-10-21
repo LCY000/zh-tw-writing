@@ -22,6 +22,7 @@ import sys
 CJK = r"[㐀-䶿一-鿿]"
 AN = r"[A-Za-z0-9]"
 FW_PUNCT = "，。、：；！？（）「」『』《》〈〉【】"
+CJKP = f"[㐀-䶿一-鿿{FW_PUNCT}]"  # 中文字或全形標點
 REF_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "references")
 CODE = "§"  # 程式碼的佔位字元
 
@@ -86,7 +87,8 @@ def strip_tags(s):
 
 
 def prose_from_html(text):
-    body = text[text.index("<body"):] if "<body" in text else text
+    m = re.search(r"<body", text, flags=re.I)
+    body = text[m.start():] if m else text
     body = re.sub(r"<(script|style)[^>]*>.*?</\1>", "", body, flags=re.S | re.I)
     body = re.sub(r"<(code|pre)[^>]*>.*?</\1>", CODE, body, flags=re.S | re.I)
     blocks = re.findall(r"<(p|li)[^>]*>(.*?)</\1>", body, flags=re.S | re.I)
@@ -135,8 +137,15 @@ def is_chinese_prose(p):
 
 
 def without_quotes(p):
-    """引文（「」『』內）不做套話與用語檢查。"""
+    """引文（「」『』內）與標題（《》〈〉內）不做套話與用語檢查。"""
+    p = re.sub(r"《[^》]*》|〈[^〉]*〉", "《》", p)
     return re.sub(r"「[^」]*」|『[^』]*』", "「」", p)
+
+
+def for_rhythm(p):
+    """引文裡的句號不另外斷句，只保留緊貼下引號、作為整句結尾的那一個。"""
+    return re.sub(r"「[^「」]*」|『[^『』]*』",
+                  lambda m: m.group()[0] + re.sub(r"[。！？](?=.)", "", m.group()[1:-1]) + m.group()[-1], p)
 
 
 def clen(s):
@@ -175,14 +184,17 @@ def check(paragraphs, lo, hi, html_mode=False):
 
     # 1. 句子節奏
     print("\n【句子節奏】")
-    periods, commas = text.count("。"), text.count("，")
-    sents = [s.strip() for p in paras for s in re.split(r"(?<=[。！？])", p) if re.search(CJK, s)]
+    rparas = [for_rhythm(p) for p in paras]
+    rtext = "\n".join(rparas)
+    periods, commas = rtext.count("。"), rtext.count("，")
+    sents = [s.strip() for p in rparas for s in re.split(r"(?<=[。！？])(?![」』])|(?<=[。！？][」』])", p)
+             if re.search(CJK, s)]
     if periods:
         ratio = commas / periods
         verdict = ("在建議範圍內" if lo <= ratio <= hi else
                    "偏低：句子可能太碎，可考慮合併同主題短句" if ratio < lo else
                    "偏高：句子可能太長，可考慮拆開並列句")
-        print(f"句號 {periods}、逗號 {commas}，平均每句逗號 {ratio:.2f}（建議 {lo:g}–{hi:g}）→ {verdict}")
+        print(f"句號 {periods}、逗號 {commas}，平均每句逗號 {ratio:.2f}（建議 {lo:g}–{hi:g}，以報告類長文為準）→ {verdict}")
         print("每句逗號數分布（7 代表 7 個以上）：",
               dict(sorted(collections.Counter(min(s.count("，"), 7) for s in sents).items())))
     lens = [clen(s) for s in sents]
@@ -237,9 +249,19 @@ def check(paragraphs, lo, hi, html_mode=False):
     print("\n【標點】")
     show_hits("分號（並列的條列項目可以用，其他多半改成逗號或句號）",
               [ctx(text, m.start(), m.end()) for m in re.finditer("；", text)])
-    show_hits("一段裡有不只一組破折號", [f"{p.count('——')} 組：{p[:36]}…" for p in paras if p.count("——") > 1])
-    show_hits("破折號寫法不對（應寫成兩格的——）",
-              [ctx(text, m.start(), m.end()) for m in re.finditer(f"(?<={CJK})(?:—(?!—)|--)(?={CJK})", text)])
+    # 書名、篇名依原文，不檢查裡面的破折號
+    tparas = [re.sub(r"《[^》]*》|〈[^〉]*〉", "《》", p) for p in paras]
+    ttext = "\n".join(tparas)
+    show_hits("一段裡有不只一組破折號（成對夾住補充說明的──…──算一組）",
+              [f"{p.count('──')} 個：{p[:36]}…" for p in tparas if p.count("──") > 2])
+    show_hits("破折號寫法不對（教育部手冊寫成兩格的──）",
+              [ctx(ttext, m.start(), m.end()) for m in re.finditer(
+                  f"——|――|{CJKP} ?--+ ?{CJKP}|(?<!─)(?:(?<={CJKP})─|─(?={CJKP}))(?!─)", ttext)])
+    show_hits("單一的—（表示起訖的連接號可以保留，當破折號用時改成──）",
+              [ctx(ttext, m.start(), m.end())
+               for m in re.finditer(f"(?<!—)(?:(?<={CJKP})—|—(?={CJKP}))(?!—)", ttext)])
+    show_hits("間隔號寫法不對（外國人名、原住民名字與書名篇名之間用全形的．）",
+              [ctx(text, m.start(), m.end()) for m in re.finditer(f"(?<={CJK})[·・‧•](?={CJK})", text)])
     show_hits("中文裡用了半形標點",
               [ctx(text, m.start(), m.end())
                for m in re.finditer(f"{CJK}[,;?!()]|[,;?!()]{CJK}|{CJK}:|(?<![0-9]):{CJK}", text)])
@@ -321,9 +343,11 @@ def add_spacing_html(seg):
 
 
 def fix_spacing(path, text, html_mode):
-    if html_mode and "<body" in text:
-        b0 = text.index("<body")
-        b1 = text.index("</body>") if "</body>" in text else len(text)
+    m0 = re.search(r"<body", text, flags=re.I)
+    if html_mode and m0:
+        b0 = m0.start()
+        m1 = re.search(r"</body>", text, flags=re.I)
+        b1 = m1.start() if m1 else len(text)
         new = text[:b0] + add_spacing_html(text[b0:b1]) + text[b1:]
     elif html_mode:
         new = add_spacing_html(text)
