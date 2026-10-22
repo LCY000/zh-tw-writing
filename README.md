@@ -1,10 +1,12 @@
 # zh-tw-writing
 
-一個給 [Claude Code](https://claude.com/claude-code) 用的 skill，讓 Claude 寫出來的繁體中文報告讀起來像台灣人自然寫的正式中文，而不是一眼就看得出來的 AI 腔或翻譯腔。
+一個中文寫作 skill，讓 AI 寫出來的繁體中文報告讀起來像台灣人自然寫的正式中文，而不是一眼就看得出來的 AI 腔或翻譯腔。
+
+這些規則是使用 Claude 寫報告時，針對它實際寫出來的問題一條一條整理出來的，所以主要以 Claude 為對象，不過 skill 採用通用的 Agent Skills 格式，Codex 與 ChatGPT 也能直接安裝使用，不用修改任何檔案，安裝方式見[安裝](#安裝)。
 
 它專注在中文寫作與改寫，順帶處理標點、中英空格這類文字排版細節，不負責整份文件的版面設計。
 
-目前版本：v1.1.0，各版本的改動見[版本紀錄](#版本紀錄)。
+目前版本：v1.1.1，各版本的改動見[版本紀錄](#版本紀錄)。
 
 ## 為什麼需要它
 
@@ -16,7 +18,7 @@
 
 > Microsoft 在 2023 年首次公開這個國家支持的駭客組織，它的攻擊目標是關鍵基礎設施，主要使用系統內建工具，由於很難被偵測，因此防禦方必須從行為下手。
 
-這些規則都是實際寫作業報告時一條一條被挑出來的問題，不是憑空列的清單，每條規則也寫明了原因，讓 Claude 知道為什麼要這樣寫，遇到規則沒涵蓋的情況也能自己判斷。
+這些規則都是實際寫作業報告時一條一條被挑出來的問題，不是憑空列的清單，每條規則也寫明了原因，讓 AI 知道為什麼要這樣寫，遇到規則沒涵蓋的情況也能自己判斷。
 
 ## 功能
 
@@ -43,14 +45,14 @@
 | 寫作業報告、論文段落、企劃書、正式信件、說明文件 | 會 |
 | 潤稿、校對，或把中文 HTML、PDF、Word 排得好讀 | 會 |
 | 把英文文章或報告翻成繁體中文 | 會 |
-| 一般問答，即使 Claude 用中文長篇回答 | 不會 |
+| 一般問答，即使 AI 用中文長篇回答 | 不會 |
 | 中文翻成英文、程式碼與註解、commit 訊息、簡體中文內容 | 不會 |
 
 ## 安裝
 
-依照你使用 Claude 的方式，選擇下面其中一種。
+Claude、Codex 與 ChatGPT 都支援 Agent Skills 格式，三邊安裝的是同一份檔案，依照你使用的工具選擇下面其中一種。
 
-### Cowork、Claude 桌面版與 claude.ai
+### Claude 桌面版與 claude.ai
 
 不需要用到指令，下載 zip 後上傳即可。
 
@@ -58,16 +60,52 @@
 2. 開啟「設定 → 功能（Capabilities）」，確認「程式碼執行與檔案建立」已開啟，檢查腳本才能執行。
 3. 在同一頁的「技能（Skills）」上傳剛才下載的 zip。
 
-上傳後，在 Cowork 或一般對話中產出正式中文文件時就會自動套用。之後有新版本時，下載新的 zip 重新上傳即可，歷次版本都列在 [Releases](https://github.com/LCY000/zh-tw-writing/releases) 頁面。
+上傳後，在對話中產出正式中文文件時就會自動套用。之後有新版本時，下載新的 zip 重新上傳即可，歷次版本都列在 [Releases](https://github.com/LCY000/zh-tw-writing/releases) 頁面。
 
-### Claude Code
+### Claude Code 與 Codex
 
-```bash
-git clone https://github.com/LCY000/zh-tw-writing.git
-ln -s "$(pwd)/zh-tw-writing/zh-tw-writing" ~/.claude/skills/zh-tw-writing
+直接請 AI 幫你裝就好，把下面這段話貼給 Claude Code 或 Codex（CLI、Codex app、IDE 擴充套件都可以）：
+
+```text
+請幫我安裝這個 skill：https://github.com/LCY000/zh-tw-writing ，安裝方式照 README 的說明。
 ```
 
-用捷徑安裝的好處是之後只要在 clone 下來的資料夾執行 `git pull`，就會更新到最新版。如果不想用捷徑，也可以直接把 `zh-tw-writing/zh-tw-writing` 資料夾複製到 `~/.claude/skills/` 底下，重新開一個 Claude Code 對話就會生效。
+AI 會讀這份 README，先問你要把 skill 裝在哪裡，沒有特別偏好的話回答「你決定」，它就會照建議的位置裝好。裝好後如果沒有生效，重新開一個對話即可。
+
+<details>
+<summary>安裝步驟（給 AI 參考，也可以自己照著做）</summary>
+
+**安裝前先用一個問題確認使用者的偏好**，每一項都附上建議的預設值，使用者說「你決定」或沒有特別偏好時，就照預設安裝，不要一項一項分開追問：
+
+1. repo 要放在哪裡：預設 clone 到 `~/skills/zh-tw-writing`，再用捷徑連到 skill 資料夾，之後在那裡執行 `git pull` 就能更新。也可以放在使用者指定的資料夾，或是不 clone、只把 skill 資料夾複製過去，這樣最簡單，但之後更新要重新下載。
+2. 安裝範圍：預設裝在使用者層級，所有專案都能用。只想在目前專案使用時，改放到專案裡的 `.claude/skills/`（Claude Code）或 `.agents/skills/`（Codex）。
+3. 使用者如果也在用另一個工具（Claude Code 或 Codex），要不要一起裝，兩邊可以共用同一份 clone。
+
+預設的安裝指令如下：
+
+```bash
+git clone https://github.com/LCY000/zh-tw-writing.git ~/skills/zh-tw-writing
+
+# Claude Code
+mkdir -p ~/.claude/skills
+ln -s ~/skills/zh-tw-writing/zh-tw-writing ~/.claude/skills/zh-tw-writing
+
+# Codex
+mkdir -p ~/.agents/skills
+ln -s ~/skills/zh-tw-writing/zh-tw-writing ~/.agents/skills/zh-tw-writing
+```
+
+捷徑要指向 repo 裡面那層 `zh-tw-writing/` 資料夾，也就是 `SKILL.md` 所在的位置，不是 repo 本身。目標位置已經有 `zh-tw-writing` 時，先告訴使用者，不要直接覆蓋。裝好後回報安裝位置與更新方式。
+
+</details>
+
+### ChatGPT
+
+ChatGPT 目前的介面是請工作模式裡的 Skill Creator 代為安裝，不是直接選檔上傳。
+
+1. 下載 [zh-tw-writing.zip](https://github.com/LCY000/zh-tw-writing/releases/latest/download/zh-tw-writing.zip)，不用解壓縮。
+2. 在「外掛程式」頁面選「新增 → 新增 skill」，畫面會切換到工作模式，輸入框裡已經帶入 Skill Creator。
+3. 點輸入框左下角的「＋」附上 zip，請它直接安裝，例如：「這是已經做好的 skill，請不要重新設計，檢查 zip 內容後直接幫我安裝。」
 
 ### 自己打包 zip
 
@@ -119,7 +157,7 @@ python3 zh-tw-writing/scripts/check_zh.py 報告.html --min 2.5 --max 4.5   # �
 zh-tw-writing/
 ├── README.md
 └── zh-tw-writing/
-    ├── SKILL.md              # 給 Claude 讀的寫作原則
+    ├── SKILL.md              # 給 AI 讀的寫作原則
     ├── references/
     │   ├── ai-phrases.md     # AI 腔用語清單，分三級
     │   ├── ai-patterns.md    # 查詞抓不到的結構型 AI 腔
@@ -151,6 +189,12 @@ zh-tw-writing/
 - [leoluyi/skills](https://github.com/leoluyi/skills)：翻譯腔的實例，分號用於並列職責的寫法，以及「數據」在統計語境中可以保留。
 
 ## 版本紀錄
+
+### v1.1.1（2026-10-23）
+
+- README 說明這個 skill 主要針對 Claude 寫出來的問題整理，但採用通用的 Agent Skills 格式，Codex 與 ChatGPT 也能直接使用。
+- 新增 Codex 與 ChatGPT 的安裝方式，Claude Code 與 Codex 改成把一段話貼給 AI，由 AI 讀 README 代為安裝，安裝前會先確認要裝在哪裡。
+- 寫作規範與檢查腳本沒有變動。
 
 ### v1.1.0（2026-10-21）
 
