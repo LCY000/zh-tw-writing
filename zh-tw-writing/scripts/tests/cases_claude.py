@@ -659,4 +659,478 @@ tags: [DGA, 網域, 監控]
               ("punct.cjk_space", "")],
         why="待辦第十四項列的過去誤報：網域名稱、網域產生演算法、比特幣、在線上會議、**粗體句。** 內文、YAML frontmatter",
     ),
+
+    # ---------- v1.3.0（2026-11-25）----------
+    # 只依 SKILL.md〈檢查方式〉、references/terms.md、ai-phrases.md 與待辦第二十八到三十一、三十六、三十九項出題
+
+    # ── 第二十八項：用語表的複合詞、新詞、略過的詞 ─────────────
+    dict(
+        name="v1.3 複合詞報完整的長詞：視頻通話、激光打印機，不拆成視頻、打印、激光",
+        ext="md",
+        text="我們用視頻通話開會，再用激光打印機印出賬號清單與二維碼，下班前寄給各組。\n",
+        hit=[("term.direct", "「視頻通話」→「視訊通話」"),
+             ("term.direct", "「激光打印機」→「雷射印表機」"),
+             ("term.direct", "「賬號」→「帳號」"),
+             ("term.direct", "「二維碼」→「QR Code」")],
+        miss=[("term.direct", "「視頻」→「影片」"), ("term.direct", "「打印」→「列印」"),
+              ("term.direct", "「激光」→「雷射」"), ("term.direct", "「打印機」→「印表機」")],
+        why="待辦第二十八項與 terms.md：視頻通話→視訊通話、激光打印機→雷射印表機要整個比對，"
+            "拆開會變成「影片通話」「列印機」；賬號、二維碼是新增的直接改用詞",
+    ),
+    dict(
+        name="v1.3 單獨的打印機報成印表機，不報成列印",
+        ext="md",
+        text="會議室的打印機卡紙了，行政人員已經聯絡廠商來修理。\n",
+        hit=[("term.direct", "「打印機」→「印表機」")],
+        miss=[("term.direct", "「打印」→「列印」")],
+        why="待辦第二十八項：「打印機」被報成「打印→列印」是已實測的 bug，照改會變「列印機」",
+    ),
+    dict(
+        name="v1.3 新增的直接改用詞：筆記本電腦、局域網、宕機、移動硬盤、剪貼板、攝像頭、點贊、便利店",
+        ext="md",
+        text="""工程師把筆記本電腦接上局域網後，伺服器突然宕機，備份只好先存到移動硬盤。
+
+他把錯誤訊息複製到剪貼板，順手關掉攝像頭，再去便利店買晚餐，回來時貼文已經有人點贊。
+""",
+        hit=[("term.direct", "「筆記本電腦」→「筆記型電腦」"), ("term.direct", "「局域網」→「區域網路」"),
+             ("term.direct", "「宕機」→「當機」"), ("term.direct", "「移動硬盤」→「外接硬碟」"),
+             ("term.direct", "「剪貼板」→「剪貼簿」"), ("term.direct", "「攝像頭」→"),
+             ("term.direct", "「便利店」→「便利商店」"), ("term.direct", "「點贊」→「按讚」")],
+        miss=[("term.direct", "「硬盤」→「硬碟」")],
+        why="terms.md「直接改用」新增的詞；移動硬盤要報整個長詞，不再另外報裡面的「硬盤」（推論：比照視頻通話的長詞優先）",
+    ),
+    dict(
+        name="v1.3「比對時略過的詞」不能誤報（致死機率、賭博主要、批發貨品、手機號稱、小區域、本科系、本周刊、地圖上周邊）",
+        ext="md",
+        text="""這種病毒的致死機率不高，非法賭博主要透過境外網站進行，批發貨品則由物流公司配送。
+
+廠商手機號稱可以防水，實測時卻在小區域內進水，本科系的學生把結果整理成報告，投稿到本周刊。
+
+地圖上周邊的商家都有標示營業時間。
+""",
+        hit=[],
+        miss=[("term.direct", ""), ("term.context", "「小區」"), ("term.context", "「本科」"),
+              ("term.context", "「本周」"), ("term.context", "「上周」")],
+        why="terms.md「比對時略過的詞」列了致死機、賭博主、批發貨、手機號稱、小區域、本科系、本周刊、上周邊；"
+            "看語意判斷表也寫「小區域」「本科系」「本周刊」「周邊」裡的不算",
+    ),
+    dict(
+        name="v1.3 新增的看語意判斷詞報在 term.context，不報成直接改用",
+        ext="md",
+        text="""本周會議討論音頻處理模組，下周再確認銷售渠道、數碼相機的保修條款。
+
+周末加班的工資由保安公司支付，招聘公告也引來不少網民留言。
+""",
+        hit=[("term.context", "「本周」"), ("term.context", "「下周」"), ("term.context", "「音頻」"),
+             ("term.context", "「渠道」"), ("term.context", "「數碼」"), ("term.context", "「保修」"),
+             ("term.context", "「周末」"), ("term.context", "「工資」"), ("term.context", "「保安」"),
+             ("term.context", "「招聘」"), ("term.context", "「網民」")],
+        miss=[("term.direct", "")],
+        why="terms.md「看語意判斷」新增音頻、渠道、數碼、保安、招聘、工資、保修、網民、周末、本周、上周、下周；"
+            "待辦第二十八項：周末、本周放看語意判斷",
+    ),
+    dict(
+        name="v1.3 周年、周邊、周圍、四周是正確寫法，不報",
+        ext="md",
+        text="公司成立十周年，主辦單位在會場周邊加派人力，周圍道路與四周停車場也都實施交通管制。\n",
+        hit=[],
+        miss=[("term.context", "周"), ("term.direct", "周")],
+        why="待辦第二十八項：「周年」「周邊」是正確寫法；看語意判斷表寫「周邊」「周遭」「周圍」裡的不算",
+    ),
+
+    # ── 第二十九項：台灣慣用字形 ─────────────────────────────
+    dict(
+        name="v1.3 台灣不用的字形：裏、綫、爲、着",
+        ext="md",
+        text="工程師在機房裏找到一條鬆脫的網路綫，爲了確認影響範圍，隨即着手檢查其他機櫃。\n",
+        hit=[("term.glyph", "「裏」→「裡」"), ("term.glyph", "「綫」→「線」"),
+             ("term.glyph", "「爲」→「為」"), ("term.glyph", "「着」→「著」")],
+        why="terms.md「台灣慣用字形」與 SKILL.md〈檢查方式〉：台灣不用的字形（裏、綫、爲、内）直接報",
+    ),
+    dict(
+        name="v1.3 長得像台灣寫法的字形：户、内、説、税",
+        ext="md",
+        text="這份内部説明列出每個用户的税務資料存放位置，只有稽核人員可以查閱。\n",
+        hit=[("term.glyph", "「内」→「內」"), ("term.glyph", "「説」→「說」"),
+             ("term.glyph", "「户」→「戶」"), ("term.glyph", "「税」→「稅」")],
+        why="terms.md「台灣慣用字形」：户、内、説、税肉眼難分辨，靠腳本找",
+    ),
+    dict(
+        name="v1.3 引號與書名號裡的字形不報，引號外的照報",
+        ext="md",
+        text="""原廠手冊寫著「設定檔放在安裝資料夾裏」，參考書目另有《羣衆心理》一書。
+
+我們爲了比對版本差異，另外下載了舊版手冊。
+""",
+        hit=[("term.glyph", "「爲」→「為」")],
+        miss=[("term.glyph", "「裏」→「裡」"), ("term.glyph", "「羣」→「群」"), ("term.glyph", "「衆」→「眾」")],
+        why="SKILL.md〈檢查方式〉：引號裡的引文與書名號裡的標題不列入字形檢查；terms.md：引號裡的引文照原文",
+    ),
+    dict(
+        name="v1.3 台灣正常字形不誤報（裡、線、為、著、內、說、戶、稅、黃、溫、錄、綠）",
+        ext="md",
+        text="機房裡的線路為主機供電，內部說明寫著每戶的稅務紀錄位置，黃色與綠色標籤代表溫度是否過高，異常時要登錄在表單上。\n",
+        hit=[],
+        miss=[("term.glyph", "")],
+        why="terms.md「台灣慣用字形」的改用欄都是台灣正常寫法，不能被報",
+    ),
+
+    # ── 第三十項：痕跡 ──────────────────────────────────────
+    dict(
+        name="v1.3 內文的零寬空格要報",
+        ext="md",
+        text="本報告說明三台主機的\u200b設定檢查結果，並列出需要更新的項目。\n",
+        hit=[("trace.invisible", "")],
+        why="SKILL.md〈檢查方式〉痕跡類：看不見的字元（零寬空格）；待辦第三十項 U+200B",
+    ),
+    dict(
+        name="v1.3 不換行空格、Unicode 標籤字元要報",
+        ext="md",
+        text="系統設定\u00a0已經完成，管理者可以登入後台確認。\U000e0041\U000e0042\n",
+        hit=[("trace.invisible", "")],
+        why="待辦第三十項：U+00A0、U+E0000–U+E007F 都在隱形字元的範圍",
+    ),
+    dict(
+        name="v1.3 檔首的 BOM 不報",
+        ext="md",
+        text="\ufeff# 檢查報告\n\n團隊檢查了三台主機的設定，確認其中兩台需要更新憑證。\n",
+        hit=[],
+        miss=[("trace.invisible", "")],
+        why="待辦第三十項：U+FEFF 檔首 BOM 除外",
+    ),
+    dict(
+        name="v1.3 檔案中間的 U+FEFF 要報",
+        ext="md",
+        text="# 檢查報告\n\n團隊檢查了三台主機的\ufeff設定，確認其中兩台需要更新憑證。\n",
+        hit=[("trace.invisible", "")],
+        why="待辦第三十項：只有檔首 BOM 除外，其他位置的 U+FEFF 照報",
+    ),
+    dict(
+        name="v1.3 引號裡的隱形字元與工具痕跡照報",
+        ext="md",
+        text="原廠回覆寫著「設定\u200b完成後請參考 https://example.com/faq?utm_source=chatgpt.com 的說明」，我們照做後問題就解決了。\n",
+        hit=[("trace.invisible", ""), ("trace.tool", "utm_source=chatgpt.com")],
+        why="（推論）SKILL.md〈檢查方式〉引文只排除套話、用語、字形、數字單位與中文字間空格，痕跡不在排除範圍；"
+            "痕跡類「幾乎不會誤報，看到就處理」",
+    ),
+    dict(
+        name="v1.3 Markdown 程式碼裡的痕跡不報",
+        ext="md",
+        text="""設定方式如下，執行前請先備份。
+
+```
+config = load()\u200b
+url = "https://example.com/?utm_source=chatgpt.com"
+owner = "TBD"
+```
+
+行內程式碼 `status = XXX` 也只是範例。
+""",
+        hit=[],
+        # 2026-11-25 維護者修改：SKILL.md 補寫「看不見的字元連程式碼一起檢查」，程式碼裡的零寬空格同樣會讓指令出錯，
+        # 所以從 miss 拿掉 trace.invisible，工具痕跡與佔位文字在程式碼裡仍然不報。
+        miss=[("trace.tool", ""), ("trace.placeholder", "")],
+        why="（推論）SKILL.md〈檢查方式〉：程式碼不檢查；待辦第三十項沒有另外說程式碼要報",
+    ),
+    dict(
+        name="v1.3 HTML 的 pre 與 code 裡的痕跡不報",
+        ext="html",
+        text="<html><body><p>以下是設定範例，執行前請先備份。</p>"
+             "<pre>token = load()\u200b\nnote = \"[cite: 1]\"</pre>"
+             "<p>欄位 <code>owner = TBD</code> 要換成實際的負責人。</p></body></html>",
+        hit=[],
+        # 2026-11-25 維護者修改：SKILL.md 補寫「看不見的字元連程式碼一起檢查」，程式碼裡的零寬空格同樣會讓指令出錯，
+        # 所以從 miss 拿掉 trace.invisible，工具痕跡與佔位文字在程式碼裡仍然不報。
+        miss=[("trace.tool", ""), ("trace.placeholder", "")],
+        why="（推論）SKILL.md〈檢查方式〉：程式碼不檢查，HTML 的 pre、code 屬於程式碼",
+    ),
+    dict(
+        name="v1.3 AI 工具痕跡：[cite: 1]、utm_source=chatgpt.com、turn0search0、oaicite",
+        ext="md",
+        text="""這項調查涵蓋 1,200 家企業[cite: 1]，完整報告放在 https://example.com/report?utm_source=chatgpt.com 頁面。
+
+另一份資料的來源標記是 turn0search0，原文還留著 :contentReference[oaicite:0]{index=0} 這段文字。
+""",
+        hit=[("trace.tool", "[cite: 1]"), ("trace.tool", "utm_source=chatgpt.com"),
+             ("trace.tool", "turn0search0"), ("trace.tool", "oaicite")],
+        why="SKILL.md〈檢查方式〉痕跡類與待辦第三十項列的工具痕跡",
+    ),
+    dict(
+        name="v1.3 沒填的佔位文字：【請在此處填寫】、TBD、XXX",
+        ext="md",
+        text="""專案負責人是【請在此處填寫】，由資訊處統籌。
+
+正式上線日期仍是 TBD，要等測試完成後才能決定。
+
+聯絡窗口為 XXX 先生，有問題可以直接寄信。
+""",
+        hit=[("trace.placeholder", "【請在此處填寫】"), ("trace.placeholder", "TBD"),
+             ("trace.placeholder", "XXX")],
+        why="SKILL.md〈檢查方式〉痕跡類與待辦第三十項列的佔位文字",
+    ),
+    dict(
+        name="v1.3 一般的【】標題與 XXXL 尺寸不算佔位文字",
+        ext="md",
+        text="【公告】本季的制服新增 XXXL 尺寸，需要的同仁請在月底前向總務處登記。\n",
+        hit=[],
+        miss=[("trace.placeholder", "")],
+        why="（推論）佔位文字指【請在此處填寫】、獨立的 TBD、XXX 這類沒填的內容；"
+            "SKILL.md 說痕跡類「幾乎不會誤報」，一般的【公告】與 XXXL 不該被當成佔位",
+    ),
+
+    # ── 第三十一項：--source 事實比對 ─────────────────────────
+    dict(
+        name="v1.3 潤稿只改說法、事實都在，不報",
+        ext="md",
+        text="專案會議將於 2026 年 3 月 5 日舉行，預算上限為 120 萬元，相關資料請寄到 ops@example.com 信箱。\n",
+        source="專案會議訂在 2026 年 3 月 5 日舉行，預算上限是 120 萬元，資料請寄到 ops@example.com 信箱。\n",
+        source_ext="md",
+        hit=[],
+        miss=[("fact.missing", ""), ("fact.added", ""), ("fact.count", "")],
+        why="SKILL.md〈檢查方式〉--source：只列原稿與改寫稿不同的事實，數字、日期、信箱都沒變就不報",
+    ),
+    dict(
+        name="v1.3 潤稿改了數字，報遺失與新增",
+        ext="md",
+        text="專案會議訂在 2026 年 3 月 5 日舉行，預算上限是 150 萬元。\n",
+        source="專案會議訂在 2026 年 3 月 5 日舉行，預算上限是 120 萬元。\n",
+        source_ext="md",
+        hit=[("fact.missing", "120"), ("fact.added", "150")],
+        why="SKILL.md〈檢查方式〉--source：原稿有、改寫稿比較少，以及改寫稿多出來的數字",
+    ),
+    dict(
+        name="v1.3 潤稿拿掉網址、換了信箱",
+        ext="md",
+        text="詳細說明放在專案頁面，聯絡人信箱是 help@example.com，有問題請直接寄信。\n",
+        source="詳細說明放在 https://example.com/plan 頁面，聯絡人信箱是 ops@example.com，有問題請直接寄信。\n",
+        source_ext="md",
+        hit=[("fact.missing", "https://example.com/plan"), ("fact.missing", "ops@example.com"),
+             ("fact.added", "help@example.com")],
+        why="SKILL.md〈檢查方式〉--source：比對網址與信箱",
+    ),
+    dict(
+        name="v1.3 潤稿改了版本號、拿掉漏洞代碼",
+        ext="md",
+        text="系統已經升級到 v2.4，修補了先前通報的漏洞。\n",
+        source="系統已經升級到 v2.3.1，修補了先前通報的 CVE-2026-12345 漏洞。\n",
+        source_ext="md",
+        hit=[("fact.missing", "2.3.1"), ("fact.missing", "CVE-2026-12345"), ("fact.added", "2.4")],
+        why="SKILL.md〈檢查方式〉--source：比對代碼與版本號",
+    ),
+    dict(
+        name="v1.3「三成」改成「30%」會被當成新增",
+        ext="md",
+        text="今年的客訴件數比去年減少了 30%，主要來自退貨流程的改善。\n",
+        source="今年的客訴件數比去年減少了三成，主要來自退貨流程的改善。\n",
+        source_ext="md",
+        hit=[("fact.added", "30")],
+        why="SKILL.md〈檢查方式〉：比的是阿拉伯數字，「三成」改成「30%」會被當成新增；待辦第三十一項列為已知誤報",
+    ),
+    dict(
+        name="v1.3 潤稿改了引文內容",
+        ext="md",
+        text="經理在會議上說：「我們下週上線。」大家隨即分頭準備。\n",
+        source="經理在會議上說：「我們下個月上線。」大家隨即分頭準備。\n",
+        source_ext="md",
+        hit=[("fact.missing", "我們下個月上線"), ("fact.added", "我們下週上線")],
+        why="SKILL.md〈檢查方式〉--source：比對引文；第四節：引文一字不動",
+    ),
+    dict(
+        name="v1.3 標題數量不同",
+        ext="md",
+        text="""# 檢查報告
+
+## 背景
+
+團隊這次檢查了三台主機的設定，並記錄每台主機的狀態。
+
+## 結果
+
+其中兩台主機需要更新憑證，另一台的設定沒有問題。
+""",
+        source="""# 檢查報告
+
+## 背景
+
+團隊這次檢查了三台主機的設定，並記錄每台主機的狀態。
+
+## 方法
+
+檢查人員逐台登入主機，比對設定檔與基準設定的差異。
+
+## 結果
+
+其中兩台主機需要更新憑證，另一台的設定沒有問題。
+""",
+        source_ext="md",
+        hit=[("fact.count", "標題")],
+        why="SKILL.md〈檢查方式〉--source：比較標題的數量",
+    ),
+    dict(
+        name="v1.3 表格列與程式碼區塊數量不同",
+        ext="md",
+        text="""以下是主機的檢查狀態，詳細指令另外附在附錄。
+
+| 主機 | 狀態 |
+|---|---|
+| 甲 | 正常 |
+| 乙 | 憑證過期 |
+""",
+        source="""以下是主機的檢查狀態，詳細指令另外附在附錄。
+
+| 主機 | 狀態 |
+|---|---|
+| 甲 | 正常 |
+| 乙 | 憑證過期 |
+| 丙 | 正常 |
+
+```
+check --all
+```
+""",
+        source_ext="md",
+        hit=[("fact.count", "表格"), ("fact.count", "程式碼")],
+        why="SKILL.md〈檢查方式〉--source：比較表格列與程式碼區塊的數量",
+    ),
+    dict(
+        name="v1.3 英翻中：日期換算後相同、引文與程式碼內容不比，不報",
+        ext="md",
+        text="""# 修補說明
+
+廠商在 2026 年 3 月 5 日發布 4.2 版，修補 17 個漏洞，其中包括 CVE-2026-12345。執行長表示「我們對這次的版本很有信心」，詳細內容見公告（https://example.org/advisory）。
+
+```
+# 先檢查設定
+deploy --region tw
+```
+""",
+        source="""# Patch notes
+
+On March 5, 2026, the vendor released version 4.2 and patched 17 vulnerabilities, including CVE-2026-12345. The CEO said "we are confident in this release". Details are in the advisory (https://example.org/advisory).
+
+```
+# check the config first
+deploy --region tw
+```
+""",
+        source_ext="md",
+        hit=[],
+        miss=[("fact.missing", ""), ("fact.added", ""), ("fact.count", "")],
+        why="SKILL.md〈檢查方式〉：原稿中文比例低於 30% 時當成英翻中，引文與程式碼區塊的內容不比，日期換算成同一種寫法再比",
+    ),
+    dict(
+        name="v1.3 英翻中：數字譯錯要報",
+        ext="md",
+        text="這次掃描在 3 台伺服器上發現 16 個漏洞，其中 2 個屬於高風險。\n",
+        source="The scan found 17 vulnerabilities on 3 servers, and 2 of them are high risk.\n",
+        source_ext="md",
+        hit=[("fact.missing", "17"), ("fact.added", "16")],
+        why="SKILL.md〈檢查方式〉與待辦第三十一項：英翻中仍比數字",
+    ),
+
+    # ── 第三十六項：輸出第一行是各類總數 ─────────────────────
+    dict(
+        name="v1.3 第一行是總數，含強提示與分號的計數",
+        ext="md",
+        text="值得注意的是，這套系統在三個月內處理了五百件申請，審核時間從十天縮短到四天；客服人員接到的重複詢問也少了一半。\n",
+        hit=[("_first", "總數："), ("_first", "強提示 1"), ("_first", "分號 1"), ("_first", "痕跡 0")],
+        why="SKILL.md〈檢查方式〉：每個檔案的輸出第一行是各類提醒的總數，例如「AI 腔 1（強提示 1）｜標點 2（分號 1、引號 1）｜…｜痕跡 0」",
+    ),
+    dict(
+        name="v1.3 第一行的總數包含痕跡",
+        ext="md",
+        text="本報告說明三台主機的\u200b設定檢查結果，並列出需要更新的項目。\n",
+        hit=[("_first", "總數："), ("_first", "痕跡 1")],
+        why="SKILL.md〈檢查方式〉：第一行總數的五類包含痕跡",
+    ),
+
+    # ── 第三十九項：分號規則的例外 ───────────────────────────
+    dict(
+        name="v1.3 並列的每一項已經有逗號時，分號提醒要建議改句號或條列",
+        ext="md",
+        text="掃描發現兩個問題：一台主機關閉了驗證，任何人都能登入；另一台的憑證已經過期，瀏覽器會顯示警告。\n",
+        # 2026-11-25 維護者修改：使用者 2026-11-25 決定分號規則改成「自己寫的內文不用分號，重寫整句」，不再建議拆成句號，提醒文字跟著改，預期改成新的寫法。
+        hit=[("punct.semicolon", "任何人都能登入；"), ("_out", "其中一項有逗號時把短的放前面")],
+        why="（推論）SKILL.md 第一節與待辦第三十九項：每一項裡已經有逗號時，改成句號各寫一句或改成條列，不要降成逗號；"
+            "分號提醒的說明應該反映這個例外（說明是分號那一類的標題，不在個別提醒裡，所以比對整份輸出）",
+    ),
+    dict(
+        name="v1.3 敘事段落裡的分號列舉照報",
+        ext="md",
+        text="使用者回報的狀況很多：查詢說找不到；翻到第二頁就失效；同一個查詢時好時壞。\n",
+        hit=[("punct.semicolon", "")],
+        why="SKILL.md 第一節：敘事段落裡的一串列舉不算可以用分號的並列，要改寫成連貫的句子",
+    ),
+    dict(
+        name="v1.3 圖說的「左：……；右：……」照報",
+        ext="md",
+        text="圖 2 比較兩種部署方式（左：單一機房集中部署；右：兩地機房分散部署）。\n",
+        hit=[("punct.semicolon", "")],
+        why="SKILL.md 第一節：圖說的「左：……；右：……」改成「左：……。右：……」",
+    ),
+    dict(
+        name="v1.3 程式碼裡的分號不報",
+        ext="md",
+        text="""設定時在同一行執行兩個指令，例如 `cd /srv; make` 即可。
+
+```
+for (i = 0; i < n; i++) { total += i; }
+```
+""",
+        hit=[],
+        miss=[("punct.semicolon", "")],
+        why="SKILL.md〈檢查方式〉：程式碼不檢查",
+    ),
+]
+
+
+# ---------- v1.3.0（2026-11-25）：多個檔案、資料夾與 --source 的命令列 ----------
+CLI_CASES = [
+    dict(
+        name="v1.3 一次檢查多個檔案，逐檔報告，最後印合計",
+        files={
+            "cover.html": "<html><body><h1>期末報告</h1>"
+                          "<p>本報告整理兩項發現；第一項是設定錯誤，第二項是文件過時。</p></body></html>",
+            "body.md": "# 內文\n\n團隊檢查了三台主機的設定，確認其中兩台需要更新憑證。\n",
+            "appendix.txt": "附錄列出每台主機的檢查紀錄，以及檢查時使用的指令。\n",
+        },
+        args=["cover.html", "body.md", "appendix.txt"],
+        hit=["cover.html", "body.md", "appendix.txt", "總數：", "合計", "分號"],
+        miss=[],
+        why="SKILL.md〈檢查方式〉與待辦第三十六項：接受多個檔案，逐檔報告，最後印出全部檔案的合計",
+    ),
+    dict(
+        name="v1.3 資料夾只檢查 .html、.htm、.md、.txt，不含子資料夾",
+        files={
+            "a.md": "# 甲\n\n團隊檢查了三台主機的設定。\n",
+            "b.htm": "<html><body><p>封面寫著期末報告的標題。</p></body></html>",
+            "c.txt": "附錄列出每台主機的檢查紀錄。\n",
+            "d.csv": "主機,狀態\n甲,正常\n",
+            "sub/e.md": "# 子資料夾\n\n這份不該被檢查。\n",
+        },
+        args=["."],
+        hit=["a.md", "b.htm", "c.txt", "合計"],
+        miss=["d.csv", "e.md"],
+        why="SKILL.md〈檢查方式〉：資料夾裡的 .html、.htm、.md、.txt（不含子資料夾）",
+    ),
+    dict(
+        name="v1.3 只給一個檔案時不印合計",
+        files={"only.md": "# 報告\n\n團隊檢查了三台主機的設定，確認其中兩台需要更新憑證。\n"},
+        args=["only.md"],
+        hit=["總數："],
+        miss=["合計"],
+        why="（推論）SKILL.md〈檢查方式〉：「一次檢查多個檔案，最後印出合計」，單一檔案沒有合計的必要",
+    ),
+    dict(
+        name="v1.3 命令列 --source 會印出【與原稿比對】",
+        files={
+            "rewrite.md": "專案會議訂在 2026 年 3 月 5 日舉行，預算上限是 150 萬元。\n",
+            "orig.md": "專案會議訂在 2026 年 3 月 5 日舉行，預算上限是 120 萬元。\n",
+        },
+        args=["rewrite.md"],
+        source="orig.md",
+        hit=["與原稿比對", "120", "150"],
+        miss=[],
+        why="SKILL.md〈檢查方式〉：加上 --source 原稿時，另外列出【與原稿比對】",
+    ),
 ]

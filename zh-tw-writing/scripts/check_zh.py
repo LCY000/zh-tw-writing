@@ -3,19 +3,27 @@
 
 用法：
     python3 check_zh.py report.html
+    python3 check_zh.py cover.html body.html appendix.html  # 一次檢查多個檔案，最後印出合計
+    python3 check_zh.py report/                         # 檢查資料夾裡的 .html、.htm、.md、.txt（不含子資料夾）
+    python3 check_zh.py rewritten.md --source original.md   # 另外比對原稿與改寫稿的數字、網址、引文等事實
     python3 check_zh.py notes.md --fix-spacing          # 自動補中英空格，原檔備份為 .bak
     python3 check_zh.py report.html --min 2.5 --max 4.5 # 調整逗號比例的建議範圍
+
+每個檔案的輸出第一行是各類提醒的總數，細節在後面。
 
 檢查範圍分兩種：
 - 句子節奏只看內文段落（HTML 的 <p>、<li>、<div> 等區塊，Markdown 的一般段落與清單），
   表格、標題、圖說本來就短，不列入。中文比例低於 30% 的段落（例如英文參考文獻）也不列入。
 - AI 腔、標點與台灣用語看所有可見文字，包括表格、標題與圖說。
-兩種都略過程式碼、YAML frontmatter、HTML 的 <nav> 與 class 或 id 含 toc、mono 的元素，
-Markdown 另外略過引用區塊、圖片與夾在內文裡的 HTML。
+兩種都略過程式碼、YAML frontmatter、引用區塊（Markdown 的 > 與 HTML 的 <blockquote>）、
+HTML 的 <nav> 與 class 或 id 含 toc、mono 的元素，Markdown 另外略過圖片與夾在內文裡的 HTML。
+痕跡（隱形字元、AI 工具的引用標記與網址參數）看原始檔，佔位文字看可見文字。
 套話與用語清單來自同一個技能資料夾的 references/ai-phrases.md 與 references/terms.md。
 """
 import argparse
+import bisect
 import collections
+import decimal
 import html
 import html.parser
 import os
@@ -81,11 +89,11 @@ def load_phrases():
 
 
 def load_terms():
-    """回傳 (直接替換 [(避免, 改用, [例外])], 看語意 [詞], 比對時略過的詞 [詞])"""
-    direct, context, keep = [], [], []
+    """回傳 (直接替換 [(避免, 改用, [例外])], 看語意 [詞], 比對時略過的詞 [詞], 字形 [(避免, 改用)])"""
+    direct, context, keep, glyphs = [], [], [], []
     path = os.path.join(REF_DIR, "terms.md")
     if not os.path.exists(path):
-        return direct, context, keep
+        return direct, context, keep, glyphs
     section = None
     for line in open(path, encoding="utf-8"):
         if line.startswith("## "):
@@ -104,7 +112,9 @@ def load_terms():
             direct.append((cells[0], cells[1], exc))
         elif section == "看語意判斷":
             context.append(cells[0])
-    return direct, context, keep
+        elif section == "台灣慣用字形" and len(cells) >= 2:
+            glyphs.append((cells[0], cells[1]))
+    return direct, context, keep, glyphs
 
 
 # ---------- 抽取文字 ----------
@@ -206,7 +216,9 @@ def clean_inline(s):
     # 「**粗體句。** 內文」「文字 **「引號」**」這種空格是 CommonMark 讓粗體成立所必需的，不算多餘空格
     s = re.sub(f"([{FW_PUNCT}])(\\*{{1,3}}|_{{1,3}})[ \\t]+", r"\1\2", s)
     s = re.sub(f"[ \\t]+(\\*{{1,3}}|_{{1,3}})([{FW_PUNCT}])", r"\1\2", s)
-    s = re.sub(r"[*_]{1,3}", "", s)
+    s = re.sub(r"\*{1,3}", "", s)
+    # 底線只拿掉成對的強調符號，TODO_LIST、_XXX 這類識別字裡的底線保留
+    s = re.sub(r"(?<![A-Za-z0-9_])(_{1,3})(?=\S)(.+?)(?<=\S)\1(?![A-Za-z0-9_])", r"\2", s)
     return s.strip()
 
 
@@ -268,7 +280,7 @@ BLOCK = {"p", "li", "td", "th", "dd", "dt", "figcaption", "caption", "blockquote
          "article", "header", "footer", "aside", "main", "figure", "table", "tr", "thead", "tbody",
          "tfoot", "ul", "ol", "dl", "form", "fieldset", "details", "summary", "body", "html", "hr",
          "h1", "h2", "h3", "h4", "h5", "h6"}
-SKIP = {"script", "style", "head", "template", "noscript", "svg", "nav"}
+SKIP = {"script", "style", "head", "template", "noscript", "svg", "nav", "blockquote"}
 INVISIBLE = {"script", "style", "head", "template", "svg"}
 CODE_TAGS = {"pre", "code", "kbd", "samp", "textarea"}
 TEXT_BLOCKS = {"p", "li", "td", "th", "dd", "dt", "figcaption", "caption", "blockquote",
@@ -590,6 +602,8 @@ class Report:
     def __init__(self):
         self.lines = []
         self.hits = collections.defaultdict(list)
+        self.periods = self.commas = 0
+        self.summary = ""
 
     def say(self, s=""):
         self.lines.append(s)
@@ -653,7 +667,8 @@ def bold_labels_md(raw):
 
 # ---------- 檢查 ----------
 
-def analyze(raw, html_mode=False, lo=2.8, hi=4.0):
+def analyze(raw, html_mode=False, lo=2.8, hi=4.0, source=None):
+    """source 是 (原稿文字, 原稿是否為 HTML)，有給時另外比對事實。"""
     rep = Report()
     if html_mode:
         segs, total, skipped, labels = segs_from_html(raw)
@@ -669,23 +684,29 @@ def analyze(raw, html_mode=False, lo=2.8, hi=4.0):
     if html_mode and total:
         sk, code = skipped
         rep.say(f"涵蓋率：檢查了 body 可見文字的 {100 * (total - sk) / total:.0f}%，略過程式碼 {100 * code / total:.0f}%，"
-                f"目錄、導覽與 mono 樣式 {100 * (sk - code) / total:.0f}%")
+                f"引用區塊、目錄、導覽與 mono 樣式 {100 * (sk - code) / total:.0f}%")
         if total > code and (total - sk) / (total - code) < 0.7:
-            rep.say("⚠ 涵蓋率偏低：程式碼以外的文字有三成以上沒被檢查，請確認內文是不是放在 <nav>，"
+            rep.say("⚠ 涵蓋率偏低：程式碼以外的文字有三成以上沒被檢查，請確認內文是不是放在 <blockquote>、<nav>，"
                     "或 class、id 含 toc、mono 的元素裡。")
         elif (total - sk) / total < 0.7:
             # 程式碼本來就不檢查，程式碼以外的文字都有檢查到時，只提醒不必處理
             rep.say("涵蓋率偏低，但略過的大多是程式碼，程式碼以外的文字都有檢查，不用處理。")
     if not psegs:
         rep.say("找不到中文內容（中文比例低於 30% 的段落與程式碼不列入）。")
-        return rep
-
-    check_rhythm(rep, rsegs, lo, hi)
-    check_ai(rep, psegs, labels)
-    # 單位只看數字與英文，表格裡只寫「30kW」的儲存格也要檢查，但略過英文段落（例如參考文獻）
-    usegs = [s for s in segs if has_chinese(s.text) or ratio_cjk(s.text)[1] < 8]
-    check_punct(rep, psegs, usegs)
-    check_terms(rep, psegs)
+    else:
+        check_rhythm(rep, rsegs, lo, hi)
+        check_ai(rep, psegs, labels)
+        # 單位只看數字與英文，表格裡只寫「30kW」的儲存格也要檢查，但略過英文段落（例如參考文獻）
+        usegs = [s for s in segs if has_chinese(s.text) or ratio_cjk(s.text)[1] < 8]
+        check_punct(rep, psegs, usegs)
+        check_terms(rep, psegs)
+    check_traces(rep, raw, segs, html_mode)
+    if source is not None:
+        check_facts(rep, raw, html_mode, *source)
+    rep.summary = summary(rep.hits, rep.periods, rep.commas, lo, hi, facts=source is not None)
+    if not psegs:
+        rep.summary += "（找不到中文內容）"
+    rep.lines.insert(0, rep.summary)
     return rep
 
 
@@ -697,6 +718,7 @@ def check_rhythm(rep, rsegs, lo, hi):
     rparas = [(s, for_rhythm(s.text)) for s in rsegs]
     periods = sum(p.count("。") for _, p in rparas)
     commas = sum(p.count("，") for _, p in rparas)
+    rep.periods, rep.commas = periods, commas
     # (段落, 句子起點, 句子原文, 句子去掉引文句號後的版本)
     sents = [(s, a, s.text[a:b], p[a:b]) for s, p in rparas for a, b in sent_spans(p)]
     if periods:
@@ -738,8 +760,10 @@ def check_rhythm(rep, rsegs, lo, hi):
         if n >= 3 and p.count("，") / n < low_cut:
             low.append((p.count("，") / n, s, n, p.count("，")))
     low.sort(key=lambda x: x[0])
-    rep.show("rhythm.low_para", f"比例最低的段落（至少 3 個句號、平均每句逗號低於 {low_cut:g}，先從這些段落改）",
+    total = f"共 {len(low)} 段，列出最低的 8 段，" if len(low) > 8 else ""
+    rep.show("rhythm.low_para", f"比例最低的段落（{total}至少 3 個句號、平均每句逗號低於 {low_cut:g}，先從這些段落改）",
              [(s.line, f"{r:.2f}（句號 {n}、逗號 {c}）{loc(s)}{s.text[:30]}…") for r, s, n, c in low[:8]])
+    rep.hits["rhythm.low_para.more"] += [s.text[:30] for _, s, _, _ in low[8:]]  # 只列行號的段落，總數也要算進去
     if len(low) > 8:
         rep.say(f"   其餘 {len(low) - 8} 段在第 {line_list([(s.line, '') for _, s, _, _ in low[8:]])} 行")
 
@@ -797,8 +821,9 @@ def check_ai(rep, psegs, labels):
 
 def check_punct(rep, psegs, usegs):
     rep.say("\n【標點】")
-    rep.show("punct.semicolon", "分號（只有每項句型相同、本來可以寫成清單的並列才用，其他改寫成連貫的句子）",
-             scan(psegs, "；"))
+    rep.show("punct.semicolon", "分號（自己寫的內文不用分號，重寫整句：短的並列用逗號，其中一項有逗號時把短的放前面，"
+             "或把細節移到下一句，不要拆成一句一句的短句。引文裡的照原文，不列入）",
+             scan(psegs, "；", without_quotes))
     # 書名、篇名依原文，不檢查裡面的破折號
     rep.show("punct.dash_multi", "一段裡有不只一組破折號（成對夾住補充說明的──…──算一組）",
              [(s.line, f"{no_titles(s.text).count('──')} 個：{loc(s)}{s.text[:36]}…") for s in psegs
@@ -824,7 +849,7 @@ def check_punct(rep, psegs, usegs):
 
 def check_terms(rep, psegs):
     rep.say("\n【台灣用語】")
-    direct, context, keep = load_terms()
+    direct, context, keep, glyphs = load_terms()
     avoid_words = [a for a, _, _ in direct]
     pool = keep + [u for _, u, _ in direct]
     hits = []
@@ -865,12 +890,494 @@ def check_terms(rep, psegs):
                 # 其餘只列行號，每一處都找得到，輸出又不會被同一個詞洗版
                 rep.say(f"      其餘 {len(items) - 5} 處在第 {line_list(items[5:])} 行")
 
+    if glyphs:
+        fix = dict(glyphs)
+        rx = "|".join(re.escape(a) for a in sorted(fix, key=len, reverse=True))
+        gh = []
+        for s in psegs:
+            q = without_quotes(s.text)
+            for mt in re.finditer(rx, q):
+                gh.append((line_of(s, mt.start()),
+                           f"「{mt.group()}」→「{fix[mt.group()]}」：{loc(s, mt.start())}{ctx(q, mt.start(), mt.end(), 12)}"))
+        rep.show("term.glyph", "台灣不用的字形（多半來自簡轉繁工具、香港或日文字形，見 references/terms.md「台灣慣用字形」）",
+                 gh, limit=15)
+
     # 「國立臺灣…」「臺北市立…」這類機構全名依官方寫法，不算混用
     text = "\n".join(s.text for s in psegs)
     plain = re.sub(r"[國市縣私]立[臺台][灣北中南東][^，。、\s]{0,8}?(大學|學院|醫院|博物館|圖書館|美術館)", "", text)
     if re.search("台灣|台北|台中|台南", plain) and re.search("臺灣|臺北|臺中|臺南", plain):
         rep.hits["term.taitai"].append("「台」與「臺」混用")
         rep.say("\n「台」與「臺」混用，請擇一並全文統一。")
+
+
+# ---------- 痕跡 ----------
+
+# 看不見的字元與 AI 工具標記的清單參考 acchuang/zh-tw-humanizer（MIT）。
+# 看不見、但會跟著文字被複製的字元。用 \u 跳脫寫，原始碼裡不放這些字元本身。
+INVIS_CHARS = {
+    "\u200b": "零寬空格",
+    "\u200c": "零寬不連字",
+    "\u200d": "零寬連字",
+    "\ufeff": "零寬不換行空格（BOM）",
+    "\u2060": "字詞連接符",
+    "\u00a0": "不換行空格",
+    "\u2009": "窄空格",
+    "\u202f": "窄不換行空格",
+}
+INVIS_RX = "[" + "".join(INVIS_CHARS) + "]|[\U000E0000-\U000E007F]+"
+
+TOOL_TRACES = [
+    (r"utm_source=(?:chatgpt\.com|openai|perplexity|copilot\.com|claude\.ai)", "AI 工具加在網址上的 utm 參數"),
+    (r"turn\d+(?:search|view|news|fetch|image|file)\d+", "ChatGPT 的檢索標記"),
+    (r"oai_?cite|contentReference\[|filecite", "ChatGPT 的引用標記"),
+    (r"【\d+(?::\d+)?†[^】\n]{0,40}】", "ChatGPT 的檔案引用標記"),
+    (r"\[cite(?:_start|_end)?(?::\s*\d+(?:\s*,\s*\d+)*)?\]", "Gemini 的引用標記"),
+    (r"\[span_\d+\]\((?:start|end)_span\)", "Gemini 的引用標記"),
+    (r"grok_card|grok_render_citation_card_json|referrer=grok\.com", "Grok 的標記"),
+    (r"ppl-ai-file-upload", "Perplexity 的上傳標記"),
+    (r"\[object Object\]", "程式輸出失敗留下的文字"),
+]
+
+PLACEHOLDERS = [
+    (r"(?i)lorem ipsum", "模板的假文字"),
+    (r"【[^】\n]{0,20}(?:請在此|填寫|填入|插入|請輸入)[^】\n]{0,20}】", "沒填的模板欄位"),
+    (r"(?<![A-Za-z0-9_])(?:TBD|TODO|FIXME)(?![A-Za-z0-9_])", "沒補的佔位文字"),
+    (r"(?<![A-Za-z0-9_])X{3,}(?![A-Za-z0-9_])", "沒補的佔位文字"),
+]
+
+
+def blank(text, a, b):
+    """把 text[a:b] 換成空格，換行保留，長度不變。"""
+    return text[:a] + re.sub(r"[^\n]", " ", text[a:b]) + text[b:]
+
+
+def blank_all(text, pattern, flags=0):
+    for m in reversed(list(re.finditer(pattern, text, flags))):
+        text = blank(text, m.start(), m.end())
+    return text
+
+
+class Lines:
+    """位置換成行號。"""
+
+    def __init__(self, text):
+        self.starts = [m.end() for m in re.finditer("\n", text)]
+
+    def __call__(self, pos):
+        return bisect.bisect_right(self.starts, pos) + 1
+
+
+def is_emoji_part(c):
+    o = ord(c)
+    return o >= 0x1F000 or 0x2600 <= o <= 0x27BF or c in "\ufe0f\u20e3"
+
+
+def check_traces(rep, raw, segs, html_mode):
+    rep.say("\n【痕跡】")
+    line = Lines(raw)
+    hits = []
+    for m in re.finditer(INVIS_RX, raw):
+        k, c = m.start(), m.group()
+        if k == 0 and c == "\ufeff":
+            continue  # 檔首的 BOM 是編碼標記，不是內文
+        prev, nxt = raw[k - 1:k], raw[m.end():m.end() + 1]
+        if c == "\u200d" and prev and nxt and is_emoji_part(prev) and is_emoji_part(nxt):
+            continue  # 組合表情符號（例如家庭、職業圖示）用的零寬連字
+        if c[0] >= "\U000E0000" and prev == "\U0001F3F4":
+            continue  # 英格蘭、蘇格蘭旗幟的標籤字元
+        name = INVIS_CHARS.get(c, "標籤字元")
+        code = "、".join(sorted({f"U+{ord(x):04X}" for x in c}))
+        s = raw.rfind("\n", 0, k) + 1
+        e = raw.find("\n", m.end())
+        e = len(raw) if e == -1 else e
+        show = lambda x: re.sub(INVIS_RX, "", x)  # 前後文只標出這一處，其他看不見的字元各有自己的提醒
+        snippet = show(raw[max(s, k - 14):k]) + f"⟦{name}⟧" + show(raw[m.end():min(e, m.end() + 14)])
+        hits.append((line(k), f"{name}（{code}）：第 {line(k)} 行：…{snippet.strip()}…"))
+    rep.show("trace.invisible", "看不見的字元（複製網頁或 AI 輸出時常夾帶，刪掉或換成一般空格）", hits)
+
+    # 工具痕跡看原始檔，連結網址裡的也要找到；程式碼裡的是範例，不算
+    t = raw
+    if html_mode:
+        t = blank_all(t, r"<(pre|code|script|style|kbd|samp|textarea)\b.*?</\1\s*>", re.S | re.I)
+    else:
+        lines = t.split("\n")
+        code = code_lines(lines)
+        t = "\n".join(re.sub(r"[^\n]", " ", ln) if k in code else ln for k, ln in enumerate(lines))
+        t = blank_all(t, r"(`+)[^`\n]+?\1")
+    hits = []
+    for rx, label in TOOL_TRACES:
+        for m in re.finditer(rx, t):
+            hits.append((line(m.start()), f"{label}「{m.group()[:40]}」：第 {line(m.start())} 行"))
+    hits.sort(key=lambda x: x[0])
+    rep.show("trace.tool", "AI 工具留下的痕跡（引用標記、網址參數，交出去之前刪掉）", hits)
+
+    hits = []
+    for s in segs:
+        q = without_quotes(s.text)
+        for rx, label in PLACEHOLDERS:
+            for m in re.finditer(rx, q):
+                hits.append((line_of(s, m.start()), f"{label}「{m.group()}」：{loc(s, m.start())}{ctx(q, m.start(), m.end(), 12)}"))
+    hits.sort(key=lambda x: x[0])
+    rep.show("trace.placeholder", "沒填的佔位文字（補上真實內容或刪掉，不要自己編）", hits)
+
+
+# ---------- 與原稿比對 ----------
+
+FW_DIGITS = str.maketrans("０１２３４５６７８９", "0123456789")
+W = "A-Za-z0-9_"
+MONTHS = {m: i + 1 for i, ms in enumerate([
+    "january jan", "february feb", "march mar", "april apr", "may", "june jun", "july jul",
+    "august aug", "september sep sept", "october oct", "november nov", "december dec"]) for m in ms.split()}
+MONTH_RX = "(?:" + "|".join(sorted((m.capitalize() for m in MONTHS), key=len, reverse=True)) + r")\.?"
+MULT = {"thousand": 3, "million": 6, "billion": 9, "trillion": 12, "千": 3, "萬": 4, "百萬": 6, "千萬": 7, "億": 8, "兆": 12}
+FACT_KINDS = [("url", "網址"), ("email", "信箱"), ("date", "日期"), ("version", "版本號或 IP"), ("code", "代碼"),
+              ("number", "數字"), ("inline", "行內程式碼"), ("block", "程式碼區塊"), ("quote", "引文")]
+COUNT_KINDS = [("heading", "標題"), ("row", "表格列"), ("link", "連結"), ("block", "程式碼區塊")]
+
+
+INLINE_TAGS = {"a", "abbr", "b", "bdi", "bdo", "cite", "data", "del", "dfn", "em", "font", "i", "ins", "kbd", "mark",
+               "q", "s", "samp", "small", "span", "strong", "sub", "sup", "time", "u", "var", "wbr"}
+HTML_TAG = re.compile(r"""<(?:[^>"']|"[^"]*"|'[^']*')*>""")  # 屬性引號裡的 > 不算標籤結束
+MD_FENCE = re.compile(r"^\s*(?:(?:[-*+]|\d{1,9}[.)])\s+)*(`{3,}|~{3,})")
+
+
+class _Links(html.parser.HTMLParser):
+    """收集 <a href> 的網址、行號與連結文字，屬性有沒有引號都認得。"""
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.links, self.cur = [], None
+
+    def handle_starttag(self, tag, attrs):
+        if tag == "a":
+            self.cur = [(dict(attrs).get("href") or "").strip(), self.getpos()[0], ""]
+
+    def handle_data(self, data):
+        if self.cur is not None:
+            self.cur[2] += data
+
+    def handle_endtag(self, tag):
+        if tag == "a" and self.cur is not None:
+            self.links.append(self.cur)
+            self.cur = None
+
+    def close(self):
+        super().close()
+        if self.cur is not None:
+            self.links.append(self.cur)
+
+
+def _tag(m):
+    """HTML 標籤拿掉：行內標籤直接接起來（1<b>23</b> 還是 123），區塊標籤換成空格，換行保留。"""
+    name = re.match(r"</?\s*([A-Za-z][A-Za-z0-9]*)", m.group())
+    keep = "\n" * m.group().count("\n")
+    return keep if name and name.group(1).lower() in INLINE_TAGS else " " + keep
+
+
+def _entity(m):
+    s = html.unescape(m.group())
+    return " " if "\n" in s else s
+
+
+def _code_body(lines):
+    """程式碼內容只去掉共同縮排與前後的空行，裡面的空格（包括行尾空白）、全形字都照原樣比。"""
+    lines = list(lines)
+    while lines and not lines[0].strip():
+        lines.pop(0)
+    while lines and not lines[-1].strip():
+        lines.pop()
+    return textwrap_dedent("\n".join(lines))
+
+
+def fact_view(raw, html_mode):
+    """回傳 (掃描用的文字, {種類: [(值, 行號)]}, {結構: 數量})。掃描用的文字和原檔的換行位置相同，
+    行號用換行數算。程式碼在轉換全形數字之前先取出，內容照原樣比。"""
+    found = collections.defaultdict(list)
+    counts = collections.Counter()
+    t = raw
+    if html_mode:
+        t = blank_all(t, r"<!--.*?-->", re.S)
+        t = blank_all(t, r"<(script|style|head|template|svg)\b.*?</\1\s*>", re.S | re.I)
+        line = Lines(t)
+        for m in re.finditer(r"<pre\b[^>]*>(.*?)</pre\s*>", t, re.S | re.I):
+            body = html.unescape(re.sub(r"<[^>]*>", "", m.group(1)))
+            found["block"].append((_code_body(body.split("\n")), line(m.start())))
+            counts["block"] += 1
+        t = blank_all(t, r"<pre\b.*?</pre\s*>", re.S | re.I)
+        for m in re.finditer(r"<code\b[^>]*>(.*?)</code\s*>", t, re.S | re.I):
+            found["inline"].append((html.unescape(re.sub(r"<[^>]*>", "", m.group(1))).strip(), line(m.start())))
+        t = blank_all(t, r"<code\b.*?</code\s*>", re.S | re.I)
+        p = _Links()
+        p.feed(t)
+        p.close()
+        for href, no, text in p.links:
+            if href and not href.startswith("#"):
+                counts["link"] += 1
+                if href != text.strip():  # 連結文字就是網址時，網址只算一次
+                    found["url"].append((href, no))
+        counts["heading"] = len(re.findall(r"<h[1-6]\b", t, re.I))
+        counts["row"] = len(re.findall(r"<tr\b", t, re.I))
+        t = re.sub(HTML_TAG, _tag, t)
+        t = re.sub(r"&#?[A-Za-z0-9]+;", _entity, t)
+    else:
+        t = blank_frontmatter(t)
+        lines = t.split("\n")
+        code = code_lines(lines)
+        k = 0
+        while k < len(lines):
+            if k not in code:
+                k += 1
+                continue
+            j = k
+            while j + 1 in code:
+                j += 1
+            # 一段連續的程式碼行可能是好幾個相鄰的區塊，依圍欄分開
+            # 結尾圍欄要和開頭同一種符號、至少一樣長、後面沒有其他字，四個反引號裡的 ``` 只是內容
+            cur, start, fenced = [], k, None
+            for idx in range(k, j + 1):
+                f = MD_FENCE.match(lines[idx])
+                if f and fenced and not (f.group(1)[0] == fenced[0] and len(f.group(1)) >= len(fenced)
+                                         and not lines[idx][f.end():].strip()):
+                    f = None
+                if f:
+                    if fenced:
+                        found["block"].append((_code_body(cur), start + 1))
+                        counts["block"] += 1
+                        cur, fenced = [], None
+                    else:
+                        if cur:
+                            found["block"].append((_code_body(cur), start + 1))
+                            counts["block"] += 1
+                        cur, start, fenced = [], idx, f.group(1)
+                else:
+                    if not cur and not fenced:
+                        start = idx
+                    cur.append(lines[idx])
+            if cur or fenced is not None:
+                found["block"].append((_code_body(cur), start + 1))
+                counts["block"] += 1
+            k = j + 1
+        prose = [ln for k, ln in enumerate(lines) if k not in code]
+        counts["heading"] = sum(bool(re.match(r"^\s{0,3}#{1,6}\s", ln)) for ln in prose)
+        counts["row"] = sum(ln.strip().startswith("|") and not re.fullmatch(r"[|:\-\s]+", ln.strip()) for ln in prose)
+        counts["link"] = sum(len(re.findall(r"(?<!!)\[[^\]]*\]\([^)]*\)|<https?://[^>]+>", ln)) for ln in prose)
+        t = "\n".join(re.sub(r"[^\n]", " ", ln) if k in code else ln for k, ln in enumerate(lines))
+        line = Lines(t)
+        for m in re.finditer(r"(`+)([^`\n]+?)\1", t):
+            found["inline"].append((m.group(2).strip(), line(m.start())))
+        t = blank_all(t, r"(`+)[^`\n]+?\1")
+        # 圖片只留替代文字；連結留文字與網址，連結文字就是網址時只留一次；<https://…> 拿掉角括號
+        t = re.sub(r"!\[([^\]\n]*)\]\([^)\n]*\)", r"\1", t)
+        t = re.sub(r"\[([^\]\n]*)\]\(\s*([^)\s]*)[^)\n]*\)",
+                   lambda m: m.group(1) + ("" if m.group(2) == m.group(1).strip() else " " + m.group(2)), t)
+        t = re.sub(r"<(https?://[^>\s]+)>", r"\1", t)
+        t = blank_all(t, r"(?m)^[ \t]*\d{1,9}[.)](?=[ \t])")  # 編號清單的編號
+    return t, found, counts
+
+
+def textwrap_dedent(s):
+    ind = [len(ln) - len(ln.lstrip()) for ln in s.split("\n") if ln.strip()]
+    n = min(ind) if ind else 0
+    return "\n".join(ln[n:] for ln in s.split("\n"))
+
+
+def _num(sign, intpart, frac, mult, pct):
+    digits = intpart.replace(",", "") + ("." + frac if frac else "")
+    with decimal.localcontext() as c:
+        c.prec = len(digits) + 20  # 預設 28 位會把很長的數字捨入成同一個值
+        d = decimal.Decimal(digits).scaleb(MULT.get(mult.lower() if mult else "", 0))
+        s = format(d.normalize(), "f")
+    if sign and s != "0":
+        s = "-" + s
+    return s + ("%" if pct else "")
+
+
+def extract_facts(raw, html_mode, quotes=True):
+    """回傳 ({種類: [(正規化的值, 原文寫法, 行號)]}, {結構: 數量})"""
+    orig, found, counts = fact_view(raw, html_mode)
+    # 比對用全形數字轉成半形的版本，顯示與潤稿比對用原文寫法（長度相同，位置對得上）
+    t = orig.translate(FW_DIGITS)
+    line = Lines(t)
+    out = collections.defaultdict(list)
+    clean = lambda s: s
+
+    for v, no in found["url"]:
+        out["url"].append((v, v, no))
+    for v, no in found["inline"]:
+        if v:
+            out["inline"].append((v, v, no))
+    for v, no in found["block"]:
+        first = v.split("\n")[0]
+        out["block"].append((v, first[:30] + ("…" if len(first) > 30 or "\n" in v else ""), no))
+
+    # 引文要在數字、網址被遮掉之前取出，引文裡改了一個數字也要看得出來
+    if quotes:
+        # 書名號也算：潤稿時把法規名稱從「」改成《》是正常的修改，內容沒變就不報
+        for m in re.finditer(r"「([^「」]+)」|『([^『』]+)』|“([^“”]+)”|\"([^\"\n]+)\"|《([^《》]+)》|〈([^〈〉]+)〉", t):
+            body = next(g for g in m.groups() if g is not None)
+            # 引文裡補中英空格（腳本與 --fix-spacing 都會建議）不算改了引文
+            out["quote"].append((re.sub(r"\s+", "", body), body[:30], line(m.start())))
+
+    def take(kind, rx, norm, flags=0):
+        """抽出一類事實，再把命中的範圍一次遮掉（逐次重組字串在大檔案會很慢）。"""
+        nonlocal t
+        spans = []
+        for m in re.finditer(rx, t, flags):
+            v = norm(m)
+            if v is None:
+                continue
+            out[kind].append((v, orig[m.start():m.end()].strip(), line(m.start())))
+            spans.append((m.start(), m.end()))
+        if spans:
+            chars = list(t)
+            for a, b in spans:
+                for k in range(a, b):
+                    if chars[k] != "\n":
+                        chars[k] = " "
+            t = "".join(chars)
+
+    def url(m):
+        u = clean(m.group())
+        while u and u[-1] in ".,;:!?*_'\"":
+            u = u[:-1]
+        while u.endswith(")") and u.count("(") < u.count(")"):
+            u = u[:-1]
+        return u
+
+    take("url", r"https?://[A-Za-z0-9\-._~:/?#@!$&*+,;=%()]+", url)  # 網址只算 ASCII，後面緊接的中文不算進去
+    take("email", f"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{{2,}}", lambda m: m.group().lower())
+
+    def ymd(y, mo, d):
+        y = int(y) if y else None
+        mo = int(mo) if mo else None
+        d = int(d) if d else None
+        if mo is not None and not 1 <= mo <= 12 or d is not None and not 1 <= d <= 31:
+            return None
+        return "-".join(x for x in (f"{y:04d}" if y else "", f"{mo:02d}" if mo else "", f"{d:02d}" if d else "") if x)
+
+    mon = lambda s: MONTHS[s.rstrip(".").lower()]
+    take("date", r"民國\s*(\d{2,3})\s*年(?:\s*(\d{1,2})\s*月(?:\s*(\d{1,2})\s*[日號])?)?",
+         lambda m: ymd(int(m.group(1)) + 1911, m.group(2), m.group(3)))
+    take("date", rf"(?<![{W}.])(\d{{4}})[-/.](\d{{1,2}})[-/.](\d{{1,2}})(?![{W}])",
+         lambda m: ymd(m.group(1), m.group(2), m.group(3)))
+    take("date", r"(?<!\d)(\d{4})\s*年\s*(\d{1,2})\s*月(?:\s*(\d{1,2})\s*[日號])?",
+         lambda m: ymd(m.group(1), m.group(2), m.group(3)))
+    take("date", r"(?<!\d)(\d{1,2})\s*月\s*(\d{1,2})\s*[日號]", lambda m: ymd(None, m.group(1), m.group(2)))
+    od = r"(\d{1,2})(?:st|nd|rd|th)?"
+    take("date", rf"\b({MONTH_RX})\s+{od},?\s+(\d{{4}})\b", lambda m: ymd(m.group(3), mon(m.group(1)), m.group(2)))
+    take("date", rf"\b{od}\s+({MONTH_RX}),?\s+(\d{{4}})\b", lambda m: ymd(m.group(3), mon(m.group(2)), m.group(1)))
+    take("date", rf"\b({MONTH_RX}),?\s+(\d{{4}})\b", lambda m: ymd(m.group(2), mon(m.group(1)), None))
+    take("date", rf"\b({MONTH_RX})\s+{od}(?![\d:])", lambda m: ymd(None, mon(m.group(1)), m.group(2)))
+    # 只有月份：in March 與「3 月」都算成月份 03，英翻中才不會把「3 月」的 3 當成新增的數字
+    # 單獨的月名要接在介系詞後面，才不會把 May I… 的 May 當成五月
+    take("date", rf"\b(?:in|by|since|until|till|from|through|during|before|after|early|late|mid-?|of|next|last|this|every)"
+                 rf"\s+({MONTH_RX})(?![A-Za-z])", lambda m: ymd(None, mon(m.group(1)), None), flags=re.I)
+    take("date", r"(?<![\d.])(\d{1,2})\s*月份?", lambda m: ymd(None, m.group(1), None))
+
+    take("version", rf"(?<![{W}.])[vV]\d+(?:\.\d+)*(?![{W}]|\.\d)|(?<![{W}.])\d+\.\d+\.\d+(?:\.\d+)*(?![{W}]|\.\d)",
+         lambda m: m.group().lower().lstrip("v"))
+
+    def code(m):
+        s = m.group()
+        if not (re.search("[A-Za-z]", s) and re.search(r"\d", s)):
+            return None
+        if re.fullmatch(rf"-?{NUM}(?:{UNITS}|%|x|st|nd|rd|th)", s, flags=re.I):
+            return None
+        return s
+    take("code", rf"(?<![{W}.:/-])[A-Za-z0-9](?:[A-Za-z0-9._:/-]*[A-Za-z0-9])?(?![{W}])", code)
+
+    # 負號只在前面不是英數字時才算（5-10 的 - 是範圍）；% 與 percent 算進值裡，50% 改成 50 也看得出來
+    take("number", r"(?:(?<![A-Za-z0-9_.])([-−－])|(?<![A-Za-z0-9_.]))(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d+))?(?![\d])"
+                   r"(?:\s*(thousand|million|billion|trillion|千萬|百萬|千|萬|億|兆)(?![A-Za-z]))?"
+                   r"(\s*(?:%|％|percent(?![A-Za-z])))?",
+         lambda m: _num(m.group(1), m.group(2), m.group(3), m.group(4), m.group(5)), flags=re.I)
+
+    return out, counts
+
+
+def check_facts(rep, raw, html_mode, src_raw, src_html):
+    rep.say("\n【與原稿比對】")
+    src_segs = segs_from_html(src_raw)[0] if src_html else segs_from_markdown(src_raw)
+    # 網址不算進中文比例；原稿中文少、改寫稿中文多才是英翻中，英文術語多的中文技術文件兩邊都低，照潤稿比
+    plain = lambda segs: re.sub(r"https?://[!-~]+", "", "\n".join(s.text for s in segs))
+    r, n = ratio_cjk(plain(src_segs))
+    r2, _ = ratio_cjk(plain(segs_from_html(raw)[0] if html_mode else segs_from_markdown(raw)))
+    translate = n > 0 and r < 0.3 and r2 >= 0.3
+    if translate:
+        rep.say("比對模式：英翻中（原稿中文比例低於 30%）。比數字、日期、網址、信箱、代碼、版本號與行內程式碼，"
+                "日期換算成同一種寫法再比，引文與程式碼區塊的內容不比，只比區塊數量。")
+    else:
+        rep.say("比對模式：潤稿（原稿是中文）。比數字、日期、網址、信箱、代碼、版本號、程式碼與引文，"
+                "修改別人的文件時這些要一字不動，所以比的是原文的寫法（只忽略空格），3,200 改成 3200 也會報。")
+    src, src_counts = extract_facts(src_raw, src_html, quotes=not translate)
+    dst, dst_counts = extract_facts(raw, html_mode, quotes=not translate)
+    missing, added = [], []
+    for kind, label in FACT_KINDS:
+        if translate and kind in ("quote", "block"):
+            continue
+        a = collections.defaultdict(list)
+        b = collections.defaultdict(list)
+        # 英翻中比換算後的值；潤稿比原文寫法，只忽略空格（補中英空格不算改）
+        key = (lambda v, shown: v) if translate or kind in ("url", "inline", "block", "quote") else \
+            (lambda v, shown: re.sub(r"\s+", "", shown))
+        for v, shown, no in src.get(kind, []):
+            a[key(v, shown)].append((shown, no))
+        for v, shown, no in dst.get(kind, []):
+            b[key(v, shown)].append((shown, no))
+        for v in sorted(set(a) | set(b), key=lambda x: min([no for _, no in a.get(x, []) + b.get(x, [])])):
+            na, nb = len(a.get(v, [])), len(b.get(v, []))
+            if na == nb:
+                continue
+            shown = (a.get(v) or b.get(v))[0][0]
+            where_a = "、".join(str(no) for no in sorted({no for _, no in a.get(v, [])}))
+            where_b = "、".join(str(no) for no in sorted({no for _, no in b.get(v, [])}))
+            msg = (f"{label}「{shown}」：原稿 {na} 次" + (f"（第 {where_a} 行）" if na else "")
+                   + f"，改寫稿 {nb} 次" + (f"（第 {where_b} 行）" if nb else ""))
+            if na > nb:
+                missing.append((min(no for _, no in a[v]), msg))
+            else:
+                added.append((min(no for _, no in b[v]), msg))
+    rep.show("fact.missing", "原稿有、改寫稿比較少（可能遺失或被改掉，回到原文確認）", missing, limit=20)
+    rep.show("fact.added", "改寫稿有、原稿比較少（可能是新增的內容，原文沒有就刪掉）", added, limit=20)
+    diff = [(0, f"{label}：原稿 {src_counts[k]} 個，改寫稿 {dst_counts[k]} 個")
+            for k, label in COUNT_KINDS if src_counts[k] != dst_counts[k]]
+    rep.show("fact.count", "結構的數量不同（標題、表格列、連結或程式碼區塊少了或多了）", diff)
+    if missing or added:
+        rep.say("\n數字只比阿拉伯數字。國字和阿拉伯數字互換（「三成」改成「30%」、three 改成「3」）、"
+                "日期範圍與序數（1st、第一）會被當成遺失或新增，要回到原文確認。")
+    elif not diff:
+        rep.say("沒有發現遺失或新增的數字、網址、代碼與引文。")
+
+
+# ---------- 總數 ----------
+
+SUMMARY = [
+    ("句子節奏", [("rhythm.low_para", "比例偏低的段落"), ("rhythm.section", "比例偏離的節"),
+              ("rhythm.short_run", "連續短句"), ("rhythm.long", "較長的句子")]),
+    ("AI 腔", [("ai.strong", "強提示"), ("ai.source", "需要來源"), ("ai.weak_dense", "弱提示密集"),
+              ("ai.contrast", "不是…而是"), ("ai.bold_label", "粗體標籤條列")]),
+    ("標點", [("punct.semicolon", "分號"), ("punct.dash_multi", "破折號過多"), ("punct.dash_form", "破折號寫法"),
+            ("punct.dash_single", "單一的—"), ("punct.interpunct", "間隔號"), ("punct.halfwidth", "半形標點"),
+            ("punct.quotes", "引號"), ("punct.cjk_space", "中英空格"), ("punct.unit", "數字單位空格"),
+            ("punct.fw_space", "標點旁空格"), ("punct.cjk_gap", "中文字間空格")]),
+    ("台灣用語", [("term.direct", "中國用語"), ("term.glyph", "字形"), ("term.context", "需確認用語"),
+              ("term.taitai", "台臺混用")]),
+    ("痕跡", [("trace.invisible", "隱形字元"), ("trace.tool", "工具痕跡"), ("trace.placeholder", "佔位文字")]),
+]
+FACT_SUMMARY = ("與原稿比對", [("fact.missing", "可能遺失"), ("fact.added", "可能新增"), ("fact.count", "數量不同")])
+
+
+def summary(hits, periods, commas, lo, hi, facts=False):
+    parts = []
+    if periods:
+        r = commas / periods
+        parts.append(f"逗號比例 {r:.2f}（{'範圍內' if lo <= r <= hi else '偏低' if r < lo else '偏高'}）")
+    for group, items in SUMMARY + ([FACT_SUMMARY] if facts else []):
+        sub = [(label, len(hits.get(k, [])) + len(hits.get(k + ".more", []))) for k, label in items]
+        n = sum(c for _, c in sub)
+        detail = "、".join(f"{label} {c}" for label, c in sub if c)
+        parts.append(f"{group} {n}" + (f"（{detail}）" if detail else ""))
+    return "總數：" + "｜".join(parts)
 
 
 # ---------- 自動補空格 ----------
@@ -940,7 +1447,7 @@ def spaced(text, html_mode):
     out = []
     for k, line in enumerate(lines):
         if k not in code:
-            parts = re.split(r"(`[^`\n]*`|https?://\S+)", line)
+            parts = re.split(r"(`[^`\n]*`|https?://[A-Za-z0-9\-._~:/?#@!$&*+,;=%()]+)", line)
             line = "".join(p if i % 2 else add_spacing(p, False) for i, p in enumerate(parts))
             line = re.sub(f"({CJK})(`[^`\\n]+`)", r"\1 \2", line)
             line = re.sub(f"(`[^`\\n]+`)({CJK})", r"\1 \2", line)
@@ -950,32 +1457,97 @@ def spaced(text, html_mode):
 
 
 def fix_spacing(path, text, html_mode):
+    """回傳 (補好空格的文字, 訊息)。"""
     new = spaced(text, html_mode)
     if new != text:
         shutil.copyfile(path, path + ".bak")
         with open(path, "w", encoding="utf-8") as f:
             f.write(new)
-        print(f"已補上中英空格，原檔備份為 {path}.bak")
-    else:
-        print("沒有需要補的空格。")
-    return new
+        return new, f"已補上中英空格，原檔備份為 {path}.bak"
+    return new, "沒有需要補的空格。"
+
+
+EXTS = (".html", ".htm", ".md", ".txt")
+
+
+def is_html(path):
+    return path.lower().endswith((".html", ".htm"))
+
+
+def expand(paths):
+    """資料夾展開成裡面的 .html、.htm、.md、.txt（不含子資料夾），回傳 (檔案, 警告)。"""
+    files, notes = [], []
+    for p in paths:
+        if os.path.isdir(p):
+            fs = sorted(f for f in os.listdir(p) if f.lower().endswith(EXTS) and not f.startswith(".")
+                        and os.path.isfile(os.path.join(p, f)))
+            if not fs:
+                notes.append(f"{p} 裡沒有 .html、.htm、.md、.txt 檔案。")
+            files += [os.path.join(p, f) for f in fs]
+        else:
+            files.append(p)
+    return files, notes
+
+
+def run(paths, fix=False, lo=2.8, hi=4.0, source=None):
+    """檢查一個或多個檔案，回傳要印出的文字。source 是原稿路徑，只能搭配一個檔案。"""
+    files, out = expand(paths)
+    src = None
+    if source:
+        if len(files) != 1:
+            return "--source 只能搭配一個要檢查的檔案。"
+        try:
+            with open(source, encoding="utf-8") as f:
+                src = (f.read(), is_html(source))
+        except (OSError, UnicodeDecodeError) as e:
+            return f"讀不到原稿 {source}：{e}"
+    multi = len(files) > 1
+    reps = []
+    for path in files:
+        if multi:
+            out.append(f"\n━━━━ {path} ━━━━")
+        try:
+            with open(path, encoding="utf-8") as f:
+                text = f.read()
+        except (OSError, UnicodeDecodeError) as e:
+            out.append(f"讀不到這個檔案：{e}")
+            reps.append((path, None))
+            continue
+        msg = None
+        if fix:
+            text, msg = fix_spacing(path, text, is_html(path))
+        rep = analyze(text, is_html(path), lo, hi, source=src)
+        reps.append((path, rep))
+        # 總數一定在第一行，補空格的訊息放在它後面
+        out += rep.lines[:1] + ([msg] if msg else []) + rep.lines[1:]
+    bad = [path for path, rep in reps if rep is None]
+    reps = [(path, rep) for path, rep in reps if rep is not None]
+    if multi and (reps or bad):
+        # 開頭也列一次各檔案的總數，輸出被截斷時，後面的檔案也看得到有沒有問題
+        out[:0] = [f"共 {len(files)} 個檔案，各檔案的總數如下，細節在後面，全部的合計在最後："] + \
+                  [f"   {path}：{rep.summary[3:]}" for path, rep in reps] + [f"   {path}：讀不到" for path in bad]
+        hits = collections.defaultdict(list)
+        for _, rep in reps:
+            for k, v in rep.hits.items():
+                hits[k] += v
+        out.append(f"\n━━━━ 全部 {len(reps)} 個檔案合計 ━━━━")
+        out.append(summary(hits, sum(r.periods for _, r in reps), sum(r.commas for _, r in reps), lo, hi))
+        out.append("各檔案：")
+        out += [f"   {path}：{rep.summary[3:]}" for path, rep in reps]
+        if len(reps) < len(files):
+            out.append(f"⚠ 有 {len(files) - len(reps)} 個檔案讀不到，沒有算進合計。")
+    return "\n".join(out)
 
 
 def main():
     ap = argparse.ArgumentParser(description="檢查繁體中文文件的句子節奏、AI 腔、台灣用語與中英混排")
-    ap.add_argument("path")
+    ap.add_argument("paths", nargs="+", metavar="path", help="要檢查的檔案或資料夾，可以給好幾個")
     ap.add_argument("--fix-spacing", action="store_true", help="自動補中英文、中文與數字之間的空格")
+    ap.add_argument("--source", metavar="原稿", help="潤稿或翻譯的原稿，比對數字、網址、引文等事實有沒有遺失或新增")
     ap.add_argument("--min", type=float, default=2.8, help="每句逗號數建議下限（預設 2.8）")
     ap.add_argument("--max", type=float, default=4.0, help="每句逗號數建議上限（預設 4）")
     a = ap.parse_args()
-
-    with open(a.path, encoding="utf-8") as f:
-        text = f.read()
-    html_mode = a.path.lower().endswith((".html", ".htm"))
-    if a.fix_spacing:
-        text = fix_spacing(a.path, text, html_mode)
-        print()
-    print("\n".join(analyze(text, html_mode, a.min, a.max).lines))
+    print(run(a.paths, a.fix_spacing, a.min, a.max, a.source))
 
 
 if __name__ == "__main__":
